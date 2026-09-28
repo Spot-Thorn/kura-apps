@@ -1,0 +1,157 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Edit apps.json (even straight on github.com) and push: this job regenerates scripts/ and
+# catalog.toml with build.ps1, checks the result, and on main commits it back automatically.
+
+permissions:
+  contents: write
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate scripts and catalog
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Catalog sanity check
+        run: |
+          python3 - <<'PY'
+          import tomllib, pathlib, sys
+          root = pathlib.Path('.')
+          data = tomllib.loads((root / 'catalog.toml').read_text(encoding='utf-8'))
+          actions = data.get('action', [])
+          if not actions:
+              sys.exit('catalog.toml has no [[action]] entries')
+          problems, seen = [], set()
+          for a in actions:
+              aid = a.get('id')
+              if not aid:
+                  problems.append('an action has no id')
+                  continue
+              if aid in seen:
+                  problems.append(f'duplicate id: {aid}')
+              seen.add(aid)
+              for field in ('name', 'category', 'description', 'run'):
+                  if field not in a:
+                      problems.append(f'{aid}: missing {field}')
+              run = a.get('run', {})
+              if run.get('type') == 'script':
+                  name = run.get('script', '')
+                  if any(c in name for c in ('..', '/', '\\', ':')):
+                      problems.append(f'{aid}: illegal script name {name!r}')
+                  elif not (root / 'scripts' / name).is_file():
+                      problems.append(f'{aid}: scripts/{name} does not exist')
+          used = {a.get('run', {}).get('script') for a in actions}
+          for f in sorted((root / 'scripts').glob('*.ps1')):
+              if f.name not in used:
+                  print(f'::warning::scripts/{f.name} is not used by any action')
+          if problems:
+              sys.exit('\n'.join(problems))
+          print(f'{len(actions)} action(s) OK')
+          PY
+
+      - name: apps.json sanity check
+        run: |
+          python3 - <<'PY'
+          import json, re, sys
+          data = json.load(open('apps.json', encoding='utf-8'))
+          apps = data.get('apps', [])
+          if not apps:
+              sys.exit('apps.json has no apps')
+          problems, seen = [], set()
+          def rx(pattern, where):
+              # .NET named groups (?<name>...) -> Python (?P<name>...)
+              try:
+                  re.compile(re.sub(r'\(\?<(?![=!])', '(?P<', pattern))
+              except re.error as e:
+                  problems.append(f'{where}: bad regex {pattern!r}: {e}')
+          need = {'json': ['url', 'path'], 'redirect': ['url', 'regex'], 'regex': ['url', 'regex'],
+                  'github': ['repo', 'assetRegex'], 'script': ['script'], 'none': []}
+          for a in apps:
+              aid = a.get('id')
+              if not aid or not re.fullmatch(r'[a-z0-9][a-z0-9-]*', aid):
+                  problems.append(f'bad or missing id: {aid!r} (lowercase letters, digits, dashes)')
+                  continue
+              if aid in ('all', 'updates', 'apps'):
+                  problems.append(f'{aid}: reserved id')
+              if aid in seen:
+                  problems.append(f'duplicate id: {aid}')
+              seen.add(aid)
+              for field in ('name', 'category', 'detect', 'latest', 'installer'):
+                  if field not in a:
+                      problems.append(f'{aid}: missing {field}')
+              d = a.get('detect', {})
+              if not any(k in d for k in ('files', 'appx', 'displayName')):
+                  problems.append(f'{aid}: detect needs files, appx or displayName')
+              if 'displayName' in d:
+                  rx(d['displayName'], f'{aid}.detect.displayName')
+              l = a.get('latest', {})
+              t = l.get('type')
+              if t not in need:
+                  problems.append(f'{aid}: unknown latest.type {t!r}')
+              else:
+                  for f in need[t]:
+                      if f not in l:
+                          problems.append(f'{aid}: latest.type {t} needs {f}')
+              for f in ('regex', 'assetRegex'):
+                  if f in l:
+                      rx(l[f], f'{aid}.latest.{f}')
+              if t in ('regex',) and 'download' not in a and '(?<url>' not in l.get('regex', ''):
+                  problems.append(f'{aid}: regex type needs download.url or a (?<url>...) group')
+              if t == 'none' and not a.get('download', {}).get('url'):
+                  problems.append(f'{aid}: latest.type none needs download.url')
+              for k in ('url', 'fileName'):
+                  v = a.get('download', {}).get(k, '')
+                  bad = set(re.findall(r'\{([^}]*)\}', v)) - {'version', 'versionNoDots'}
+                  if bad:
+                      problems.append(f'{aid}: download.{k} has unknown token(s) {sorted(bad)}')
+              i = a.get('installer', {})
+              if i.get('type') not in ('msi', 'exe'):
+                  problems.append(f'{aid}: installer.type must be msi or exe')
+          if problems:
+              sys.exit('\n'.join(problems))
+          print(f'{len(apps)} app(s) OK')
+          PY
+
+      - name: Unit tests
+        shell: pwsh
+        run: ./tests/unit.ps1
+
+      - name: No self-elevation
+        run: |
+          if grep -rniE "Verb[[:space:]]+RunAs" scripts/; then
+            echo "::error::scripts must not self-elevate — Kura handles UAC"
+            exit 1
+          fi
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $all = Invoke-ScriptAnalyzer -Path scripts -Recurse
+          if ($all) { $all | Format-Table -AutoSize | Out-String | Write-Host }
+          $errors = $all | Where-Object Severity -eq 'Error'
+          if ($errors) { throw "$($errors.Count) analyzer error(s)" }
+
+      # Only after every check above passed, and only for pushes to main (not pull requests).
+      # Pushes made with the built-in token don't start new workflow runs, so this can't loop.
+      - name: Commit regenerated files
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git add -A scripts catalog.toml
+          if git diff --cached --quiet; then
+            echo "Generated files already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Regenerate scripts and catalog from apps.json"
+          git push
