@@ -1,0 +1,294 @@
+{
+  "schemaVersion": 1,
+  "apps": [
+    {
+      "id": "chrome",
+      "name": "Google Chrome",
+      "category": "Browsers",
+      "notes": "Latest = the stable build at the widest rollout, which is what the enterprise MSI serves.",
+      "detect": {
+        "files": [
+          "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe",
+          "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe"
+        ]
+      },
+      "latest": {
+        "type": "json",
+        "url": "https://versionhistory.googleapis.com/v1/chrome/platforms/win64/channels/stable/versions/all/releases?filter=endtime=none&order_by=fraction%20desc",
+        "path": "releases[0].version"
+      },
+      "download": {
+        "url": "https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi",
+        "fileName": "googlechromestandaloneenterprise64.msi"
+      },
+      "installer": {
+        "type": "msi",
+        "silentArgs": "/qn /norestart",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "firefox",
+      "name": "Mozilla Firefox",
+      "category": "Browsers",
+      "detect": {
+        "displayName": "^Mozilla Firefox( \\(x64|$)"
+      },
+      "latest": {
+        "type": "json",
+        "url": "https://product-details.mozilla.org/1.0/firefox_versions.json",
+        "path": "LATEST_FIREFOX_VERSION"
+      },
+      "download": {
+        "url": "https://download.mozilla.org/?product=firefox-msi-latest-ssl&os=win64&lang=en-US",
+        "fileName": "Firefox-{version}-x64.msi"
+      },
+      "installer": {
+        "type": "msi",
+        "silentArgs": "/qn /norestart",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "edge",
+      "name": "Microsoft Edge",
+      "category": "Browsers",
+      "detect": {
+        "files": [
+          "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe",
+          "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe"
+        ]
+      },
+      "latest": {
+        "type": "script",
+        "script": [
+          "$r = Invoke-RestMethod -Uri 'https://edgeupdates.microsoft.com/api/products' -UseBasicParsing",
+          "$rel = ($r | Where-Object { $_.Product -eq 'Stable' }).Releases |",
+          "  Where-Object { $_.Platform -eq 'Windows' -and $_.Architecture -eq 'x64' } |",
+          "  Sort-Object { [version]$_.ProductVersion } -Descending | Select-Object -First 1",
+          "$msi = $rel.Artifacts | Where-Object { $_.ArtifactName -eq 'msi' } | Select-Object -First 1",
+          "@{ Version = $rel.ProductVersion; Url = $msi.Location }"
+        ]
+      },
+      "download": {
+        "fileName": "MicrosoftEdgeEnterpriseX64-{version}.msi"
+      },
+      "installer": {
+        "type": "msi",
+        "silentArgs": "/qn /norestart",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "category": "Communication",
+      "perUser": true,
+      "notes": "Per-user install. Run as the logged-in user; skipped under SYSTEM unless named explicitly.",
+      "detect": {
+        "displayName": "^Discord$"
+      },
+      "latest": {
+        "type": "redirect",
+        "url": "https://discord.com/api/download?platform=win",
+        "regex": "/(?<version>\\d+\\.\\d+\\.\\d+)/[^/]*\\.exe"
+      },
+      "download": {
+        "fileName": "DiscordSetup-{version}.exe"
+      },
+      "installer": {
+        "type": "exe",
+        "silentArgs": "-s",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "zoom",
+      "name": "Zoom Workplace",
+      "category": "Communication",
+      "notes": "Installed version is read from Zoom.exe's file version so it lines up with the 4-part version in Zoom's download URL.",
+      "detect": {
+        "files": [
+          "%ProgramFiles%\\Zoom\\bin\\Zoom.exe",
+          "%APPDATA%\\Zoom\\bin\\Zoom.exe"
+        ],
+        "displayName": "^Zoom( Workplace)?( \\(64-bit\\))?$"
+      },
+      "latest": {
+        "type": "redirect",
+        "url": "https://zoom.us/client/latest/ZoomInstallerFull.msi?archType=x64",
+        "regex": "/prod/(?<version>[\\d.]+)/"
+      },
+      "download": {
+        "fileName": "ZoomInstallerFull-{version}-x64.msi"
+      },
+      "installer": {
+        "type": "msi",
+        "silentArgs": "/qn /norestart",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "teams",
+      "name": "Microsoft Teams (new)",
+      "category": "Communication",
+      "notes": "Uses Microsoft's bootstrapper to provision Teams for all users. Needs admin. Microsoft has no public 'latest version' feed, so the script can't compare versions for Teams.",
+      "detect": {
+        "appx": "MSTeams"
+      },
+      "latest": {
+        "type": "none"
+      },
+      "download": {
+        "url": "https://go.microsoft.com/fwlink/?linkid=2243204&clcid=0x409",
+        "fileName": "teamsbootstrapper.exe"
+      },
+      "installer": {
+        "type": "exe",
+        "silentArgs": "-p",
+        "interactiveArgs": "-p"
+      }
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "category": "Communication",
+      "perUser": true,
+      "notes": "Per-user install. Run as the logged-in user; skipped under SYSTEM unless named explicitly.",
+      "detect": {
+        "displayName": "^Slack$"
+      },
+      "latest": {
+        "type": "redirect",
+        "url": "https://slack.com/ssb/download-win64",
+        "regex": "/(?<version>\\d+\\.\\d+\\.\\d+)/"
+      },
+      "download": {
+        "fileName": "SlackSetup-{version}.exe"
+      },
+      "installer": {
+        "type": "exe",
+        "silentArgs": "-s",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "7zip",
+      "name": "7-Zip",
+      "category": "Utilities",
+      "detect": {
+        "displayName": "^7-Zip"
+      },
+      "latest": {
+        "type": "github",
+        "repo": "ip7z/7zip",
+        "assetRegex": "^7z\\d+-x64\\.msi$"
+      },
+      "installer": {
+        "type": "msi",
+        "silentArgs": "/qn /norestart",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "notepadplusplus",
+      "name": "Notepad++",
+      "category": "Utilities",
+      "detect": {
+        "displayName": "^Notepad\\+\\+"
+      },
+      "latest": {
+        "type": "github",
+        "repo": "notepad-plus-plus/notepad-plus-plus",
+        "assetRegex": "^npp\\.[\\d.]+\\.Installer\\.x64\\.exe$"
+      },
+      "installer": {
+        "type": "exe",
+        "silentArgs": "/S",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "vlc",
+      "name": "VLC media player",
+      "category": "Utilities",
+      "detect": {
+        "displayName": "^VLC media player"
+      },
+      "latest": {
+        "type": "regex",
+        "url": "https://www.videolan.org/vlc/download-windows.html",
+        "regex": "vlc-(?<version>\\d+\\.\\d+\\.\\d+)-win64\\.msi"
+      },
+      "download": {
+        "url": "https://get.videolan.org/vlc/{version}/win64/vlc-{version}-win64.msi"
+      },
+      "installer": {
+        "type": "msi",
+        "silentArgs": "/qn /norestart",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "adobereader",
+      "name": "Adobe Acrobat Reader",
+      "category": "Utilities",
+      "notes": "64-bit Reader registers as 'Adobe Acrobat (64-bit)', the same name as Acrobat Pro - don't run this on machines with Pro.",
+      "detect": {
+        "displayName": "^Adobe Acrobat( Reader)?( DC)?( \\(64-bit\\))?$"
+      },
+      "latest": {
+        "type": "json",
+        "url": "https://rdc.adobe.io/reader/products?lang=en&site=enterprise&os=Windows%2011&api_key=dc-get-adobereader-cdn",
+        "path": "products.reader[0].version"
+      },
+      "download": {
+        "url": "https://ardownload2.adobe.com/pub/adobe/acrobat/win/AcrobatDC/{versionNoDots}/AcroRdrDCx64{versionNoDots}_en_US.exe"
+      },
+      "installer": {
+        "type": "exe",
+        "silentArgs": "/sAll /rs /msi EULA_ACCEPT=YES",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "everything",
+      "name": "Everything (voidtools)",
+      "category": "Utilities",
+      "detect": {
+        "displayName": "^Everything"
+      },
+      "latest": {
+        "type": "regex",
+        "url": "https://www.voidtools.com/downloads/",
+        "regex": "Everything-(?<version>\\d+\\.\\d+\\.\\d+\\.\\d+)\\.x64\\.msi"
+      },
+      "download": {
+        "url": "https://www.voidtools.com/Everything-{version}.x64.msi"
+      },
+      "installer": {
+        "type": "msi",
+        "silentArgs": "/qn /norestart",
+        "interactiveArgs": ""
+      }
+    },
+    {
+      "id": "sharex",
+      "name": "ShareX",
+      "category": "Utilities",
+      "detect": {
+        "displayName": "^ShareX"
+      },
+      "latest": {
+        "type": "github",
+        "repo": "ShareX/ShareX",
+        "assetRegex": "^ShareX-[\\d.]+-setup(-x64)?\\.exe$"
+      },
+      "installer": {
+        "type": "exe",
+        "silentArgs": "/VERYSILENT /NORESTART /NORUN",
+        "interactiveArgs": ""
+      }
+    }
+  ]
+}
