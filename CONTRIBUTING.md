@@ -8,7 +8,7 @@
   - The validate check runs on your pull request, and the maintainer approves it before merging.
 - **Download links must come from the vendor** (or the vendor's official GitHub releases). Mirrors and third-party download sites aren't accepted.
 
-## Maintaining (repo owner)
+## Maintaining (repo owner or fork)
 
 **Adding or changing an app on github.com:**
 
