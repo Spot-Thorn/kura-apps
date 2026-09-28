@@ -113,6 +113,11 @@ jobs:
                   bad = set(re.findall(r'\{([^}]*)\}', v)) - {'version', 'versionNoDots'}
                   if bad:
                       problems.append(f'{aid}: download.{k} has unknown token(s) {sorted(bad)}')
+              sig = a.get('signature', 'required')
+              if sig not in ('required', 'unsigned'):
+                  problems.append(f'{aid}: signature must be required or unsigned')
+              if sig == 'unsigned' and t != 'github':
+                  problems.append(f'{aid}: signature unsigned needs latest.type github (the published SHA-256 is the check)')
               i = a.get('installer', {})
               if i.get('type') not in ('msi', 'exe'):
                   problems.append(f'{aid}: installer.type must be msi or exe')
