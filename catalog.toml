@@ -70,7 +70,7 @@ run = { type = "script", script = "install-slack.ps1" }
 id = "spot-install-7zip"
 name = "Install 7-Zip"
 category = "install"
-description = "Installs or updates 7-Zip with the latest version from the vendor. Shows the installed and latest version first, then asks: silent install, interactive install, or cancel."
+description = "Installs or updates 7-Zip with the latest version from the vendor. Shows the installed and latest version first, then asks: silent install, interactive install, or cancel. Note: 7-Zip installers aren't code-signed; the download is checked against the SHA-256 GitHub publishes for the release instead."
 requires_admin = true
 destructive = false
 run = { type = "script", script = "install-7zip.ps1" }
