@@ -176,6 +176,8 @@
       "id": "7zip",
       "name": "7-Zip",
       "category": "Utilities",
+      "signature": "unsigned",
+      "notes": "7-Zip installers aren't code-signed; the download is checked against the SHA-256 GitHub publishes for the release instead.",
       "detect": {
         "displayName": "^7-Zip"
       },

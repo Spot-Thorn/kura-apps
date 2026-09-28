@@ -49,7 +49,8 @@
     Print the app table (installed vs latest) and exit.
 
 .PARAMETER SkipSignatureCheck
-    Don't require a valid Authenticode signature on downloaded installers.
+    Don't require a valid Authenticode signature (or, for apps marked "unsigned" in
+    apps.json, a matching published SHA-256 checksum) on downloaded installers.
 
 .EXAMPLE
     .\install-chrome.ps1
@@ -344,7 +345,8 @@ function Get-GitHubLatest {
         $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing -UserAgent $UserAgent -Headers $headers
         $asset = @($rel.assets) | Where-Object { $_.name -match $AssetRegex } | Select-Object -First 1
         if (-not $asset) { throw "No release asset matching '$AssetRegex' in $Repo $($rel.tag_name)" }
-        return @{ Tag = [string]$rel.tag_name; Url = [string]$asset.browser_download_url }
+        # GitHub publishes a SHA-256 for each release asset ("digest": "sha256:<hex>")
+        return @{ Tag = [string]$rel.tag_name; Url = [string]$asset.browser_download_url; Sha256 = (Get-Sha256FromDigest ([string]$asset.digest)) }
     } catch {
         $apiError = $_.Exception.Message
         Write-KuraLog "[$Repo] GitHub API failed ($apiError) - trying release page" -Level Warn -Quiet
@@ -356,7 +358,7 @@ function Get-GitHubLatest {
     foreach ($m in [regex]::Matches($html, 'href="(?<href>/[^"]+/releases/download/[^"]+)"')) {
         $href = $m.Groups['href'].Value
         $name = [Uri]::UnescapeDataString(($href -split '/')[-1])
-        if ($name -match $AssetRegex) { return @{ Tag = $tag; Url = "https://github.com$href" } }
+        if ($name -match $AssetRegex) { return @{ Tag = $tag; Url = "https://github.com$href"; Sha256 = $null } }
     }
     throw "No release asset matching '$AssetRegex' in $Repo $tag"
 }
@@ -369,10 +371,17 @@ function Expand-Template {
     return $Template.Replace('{versionNoDots}', ($v -replace '\.', '')).Replace('{version}', $v)
 }
 
+# "sha256:ABC..." -> "ABC..." (upper case), anything else -> $null
+function Get-Sha256FromDigest {
+    param([string]$Digest)
+    if ($Digest -match '^sha256:(?<h>[0-9a-fA-F]{64})$') { return $Matches['h'].ToUpperInvariant() }
+    return $null
+}
+
 function Resolve-Latest {
     param($AppDef)
     $l = $AppDef.latest
-    $version = $null; $url = $null; $err = $null
+    $version = $null; $url = $null; $err = $null; $sha256 = $null
     $ic = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
 
     try {
@@ -398,6 +407,7 @@ function Resolve-Latest {
                 $gh = Get-GitHubLatest -Repo $l.repo -AssetRegex $l.assetRegex
                 $version = $gh.Tag -replace '^[^\d]*', ''
                 $url = $gh.Url
+                $sha256 = $gh.Sha256
             }
             'script' {
                 $code = (@($l.script) -join "`n")
@@ -416,6 +426,7 @@ function Resolve-Latest {
 
     # A download.url in the manifest wins. Templates with {version} need a resolved version.
     if ($AppDef.download -and $AppDef.download.url) {
+        $sha256 = $null   # the published checksum belongs to the resolved asset, not an override URL
         $t = [string]$AppDef.download.url
         if ($version -or $t -notmatch '\{version') { $url = Expand-Template $t $version } else { $url = $null }
     }
@@ -435,7 +446,7 @@ function Resolve-Latest {
     if (-not $fileName) { $fileName = '{0}-{1}.{2}' -f $AppDef.id, $(if ($version) { $version } else { 'latest' }), $AppDef.installer.type }
     $fileName = $fileName -replace '[\\/:*?"<>|]', '_'
 
-    return [pscustomobject]@{ Version = $version; Url = $url; FileName = $fileName; Error = $err }
+    return [pscustomobject]@{ Version = $version; Url = $url; FileName = $fileName; Sha256 = $sha256; Error = $err }
 }
 
 # ----- State for one app --------------------------------------------------------------
@@ -473,17 +484,39 @@ function Test-IsAdmin {
     } catch { return $false }
 }
 
-function Test-Signature {
-    param([string]$File, [bool]$CanPrompt)
-    if ($SkipSignatureCheck) { return $true }
-    $sig = Get-AuthenticodeSignature -FilePath $File
-    if ($sig.Status -eq 'Valid') {
-        Write-KuraLog "  Signed by: $($sig.SignerCertificate.Subject)" -Quiet
-        return $true
+# Decides whether a downloaded installer may run.
+#  - A published SHA-256 (GitHub release assets) must always match, whatever else is set.
+#  - Normal apps: must have a valid Authenticode signature.
+#  - Apps marked "signature": "unsigned" in apps.json (the vendor doesn't sign, e.g. 7-Zip):
+#    the matching SHA-256 is the check instead.
+#  - Otherwise: ask (interactive) or refuse (unattended). -SkipSignatureCheck allows it.
+function Test-Installer {
+    param($AppDef, $Latest, [string]$File, [bool]$CanPrompt)
+    $hashOk = $false
+    if ($Latest.Sha256) {
+        $actual = (Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToUpperInvariant()
+        if ($actual -ne $Latest.Sha256) {
+            Write-KuraLog "  Checksum MISMATCH - expected $($Latest.Sha256), got $actual" -Level Error
+            return $false   # never run a file that doesn't match what the vendor published
+        }
+        Write-KuraLog '  Checksum matches the SHA-256 published with the release' -Level Ok
+        $hashOk = $true
     }
-    Write-KuraLog "  Signature check: $($sig.Status) ($($sig.StatusMessage))" -Level Warn
+    if ($SkipSignatureCheck) { return $true }
+
+    if ($AppDef.signature -eq 'unsigned') {
+        if ($hashOk) { return $true }
+        Write-KuraLog "  $($AppDef.name) installers aren't code-signed and no published checksum was available to verify this one." -Level Warn
+    } else {
+        $sig = Get-AuthenticodeSignature -FilePath $File
+        if ($sig.Status -eq 'Valid') {
+            Write-KuraLog "  Signed by: $($sig.SignerCertificate.Subject)" -Quiet
+            return $true
+        }
+        Write-KuraLog "  Signature check: $($sig.Status) ($($sig.StatusMessage))" -Level Warn
+    }
     if (-not $CanPrompt) { return $false }
-    $c = Read-Choice -Title 'Unsigned installer' -Message "Run it anyway?" -Options @('&No', '&Yes') -Default 0
+    $c = Read-Choice -Title 'Unverified installer' -Message 'Run it anyway?' -Options @('&No', '&Yes') -Default 0
     return ($c -eq 1)
 }
 
@@ -521,10 +554,10 @@ function Install-AppPackage {
     }
 
     $sigOk = $false
-    try { $sigOk = Test-Signature -File $file -CanPrompt $CanPrompt }
-    catch { Write-KuraLog "[$($def.id)] Signature check failed: $($_.Exception.Message)" -Level Error }
+    try { $sigOk = Test-Installer -AppDef $def -Latest $latest -File $file -CanPrompt $CanPrompt }
+    catch { Write-KuraLog "[$($def.id)] Installer check failed: $($_.Exception.Message)" -Level Error }
     if (-not $sigOk) {
-        Write-KuraLog "[$($def.id)] Skipped - installer signature not valid" -Level Error
+        Write-KuraLog "[$($def.id)] Skipped - installer could not be verified" -Level Error
         if (-not $KeepDownloads) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
         return $false
     }
@@ -696,6 +729,7 @@ if ($CheckFeeds) {
         $state = 'OK'
         if ($d.latest.type -ne 'none' -and -not $r.Version) { $state = "FAIL: $($r.Error)" }
         elseif (-not $r.Url) { $state = "FAIL: no download URL $($r.Error)" }
+        elseif ($d.signature -eq 'unsigned' -and -not $r.Sha256) { $state = 'FAIL: unsigned app but no published SHA-256 to verify it with' }
         else {
             try { $null = Get-RedirectTarget $r.Url } catch { $state = "FAIL: download URL - $(Get-ErrorText $_)" }
         }

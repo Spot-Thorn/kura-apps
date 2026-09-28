@@ -84,7 +84,13 @@ Other options:
 
 Adding a source means running whatever this repo publishes, on your machines, as administrator. That includes the download URLs and any `script`-type lookups in `apps.json`, since they're pasted into every script. Turn on branch protection for `main`, and read diffs to `apps.json` like code.
 
-Every downloaded installer must have a valid Authenticode signature. Interactively you're asked before an unsigned one runs; `-Unattended` refuses it.
+Every downloaded installer is checked before it runs:
+
+- **Most apps** need a valid Authenticode signature.
+- **Apps whose vendor doesn't sign installers** (7-Zip) are marked `"signature": "unsigned"`. Their download has to match the SHA-256 that GitHub publishes with the release instead.
+- **Any GitHub download**, signed or not, has to match its published SHA-256. A mismatch always blocks the install, even with `-SkipSignatureCheck`.
+
+If a check can't be passed, you're asked before the installer runs interactively, and `-Unattended` refuses it.
 
 Some apps need extra care:
 
@@ -119,6 +125,7 @@ Settings at the top of `build.ps1`:
   "name": "PuTTY",                        // action name: "Install PuTTY"
   "category": "Admin",
   "perUser": false,                       // true = installs into the user profile; action doesn't need admin
+  "signature": "required",                // or "unsigned" if the vendor doesn't sign (github type only; verified by SHA-256)
   "notes": "Optional text shown before the prompt and added to the action description",
   "detect":   { ... },                    // how to find the installed version
   "latest":   { ... },                    // how to find the newest version

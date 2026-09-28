@@ -28,6 +28,24 @@ Check 'sel spaced range' ((Resolve-Selection '2 - 4' $st) -join ',') '1,2,3'
 Check 'sel category'    ((Resolve-Selection 'browsers' $st) -join ',') '0,1,2'
 Check 'sel updates'     ((Resolve-Selection 'updates' $st) -join ',') '4'
 Check 'sel id+dupe'     ((Resolve-Selection 'a8 8 99' $st) -join ',') '7'
+# checksums / unsigned apps
+Check 'digest parse'    (Get-Sha256FromDigest ('sha256:' + ('ab' * 32))) (('AB' * 32))
+Check 'digest bad'      ($null -eq (Get-Sha256FromDigest 'md5:abc')) True
+Check 'digest empty'    ($null -eq (Get-Sha256FromDigest '')) True
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ('kura-unit-' + [guid]::NewGuid() + '.bin')
+[IO.File]::WriteAllText($tmp, 'hello kura')
+$good = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash
+$unsignedApp = [pscustomobject]@{ id = 'x'; name = 'X'; signature = 'unsigned' }
+$SkipSignatureCheck = $false
+Check 'unsigned + hash ok'        (Test-Installer $unsignedApp ([pscustomobject]@{ Sha256 = $good }) $tmp $false) True
+Check 'unsigned + hash mismatch'  (Test-Installer $unsignedApp ([pscustomobject]@{ Sha256 = ('0' * 64) }) $tmp $false) False
+Check 'unsigned + no hash (unattended)' (Test-Installer $unsignedApp ([pscustomobject]@{ Sha256 = $null }) $tmp $false) False
+$SkipSignatureCheck = $true
+Check 'mismatch beats -SkipSignatureCheck' (Test-Installer $unsignedApp ([pscustomobject]@{ Sha256 = ('0' * 64) }) $tmp $false) False
+Check 'no hash + -SkipSignatureCheck'      (Test-Installer $unsignedApp ([pscustomobject]@{ Sha256 = $null }) $tmp $false) True
+$SkipSignatureCheck = $false
+Remove-Item -LiteralPath $tmp -Force
+
 # real apps.json regexes against realistic strings
 $apps = (Get-Content (Join-Path $PSScriptRoot '../apps.json') -Raw | ConvertFrom-Json).apps
 function App($id) { $apps | Where-Object id -eq $id }
