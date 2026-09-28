@@ -1,0 +1,23 @@
+name: feeds
+
+# Checks every app's "latest version" lookup and download link still work.
+# Vendors change their URLs without warning; this catches it before a tech does.
+# Runs weekly, whenever apps.json or the script changes, and on demand.
+
+on:
+  schedule:
+    - cron: '17 12 * * 1'   # Mondays 12:17 UTC
+  push:
+    paths: ['apps.json', 'src/engine.ps1']
+  workflow_dispatch:
+
+jobs:
+  feeds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve latest versions and download links
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./src/engine.ps1 -CheckFeeds -Manifest ./apps.json
