@@ -77,4 +77,37 @@ foreach ($f in Get-ChildItem (Join-Path $PSScriptRoot '../scripts') -Filter '*.p
     Check "gen $($f.Name) list"     ($embeddedIds -join ',') ($ids -join ',')
 }
 Check 'gen one script per app + menu' (@(Get-ChildItem (Join-Path $PSScriptRoot '../scripts') -Filter '*.ps1').Count) ($ids.Count + 1)
+
+# ---- Kura runner: Kura puts its own Read-Host line above the script and pipes stdin/stdout ----
+$kuraShim = "function Read-Host { param([Parameter(Position=0)][string]`$Prompt,[switch]`$AsSecureString) if(`$AsSecureString){throw 'Kura cannot read secure input'} if(`$Prompt){[Console]::Out.Write(`$Prompt + ': ');[Console]::Out.Flush()} Microsoft.PowerShell.Utility\Read-Host }"
+$pwshExe = (Get-Process -Id $PID).Path
+$fixture = Join-Path $PSScriptRoot 'fixture-apps.json'
+$stage = Join-Path ([IO.Path]::GetTempPath()) ('kura-stage-' + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $stage | Out-Null
+function Invoke-Staged([string]$Source, [string]$Name, [string[]]$ScriptArgs, [string]$Stdin, [string]$AppId) {
+    $text = [IO.File]::ReadAllText($Source)
+    if ($AppId) { $text = $text -replace "\`$EmbeddedAppId = '[^']*'", "`$EmbeddedAppId = '$AppId'" }
+    $staged = Join-Path $stage $Name
+    [IO.File]::WriteAllText($staged, $kuraShim + "`r`n" + $text, (New-Object System.Text.UTF8Encoding($true)))
+    $out = $Stdin | & $pwshExe -NoProfile -File $staged @ScriptArgs 2>&1 | Out-String
+    return @{ Code = $LASTEXITCODE; Out = $out }
+}
+$scriptsDir = Join-Path $PSScriptRoot '../scripts'
+$r = Invoke-Staged (Join-Path $scriptsDir 'install-apps.ps1') 'install-apps.ps1' @('-List', '-Manifest', $fixture) ''
+Check 'kura: -List exit 0'          $r.Code 0
+Check 'kura: -List shows app'       ($r.Out -match 'Fixture One') True
+Check 'kura: no parse error'        ($r.Out -match 'Unexpected attribute|Unexpected token') False
+$r = Invoke-Staged (Join-Path $scriptsDir 'install-apps.ps1') 'install-apps.ps1' @('-App', 'nope,fixture-typo', '-Manifest', $fixture) ''
+Check 'kura: unknown ids exit 1'    $r.Code 1
+Check 'kura: both ids reported'     (($r.Out -match "'nope'") -and ($r.Out -match "'fixture-typo'")) True
+$r = Invoke-Staged (Join-Path $scriptsDir 'install-7zip.ps1') 'install-7zip.ps1' @('-Manifest', $fixture) "c`n`n" 'fixture-one'
+Check 'kura: single app prompt shown'   ($r.Out -match '\[S\] Silent install') True
+Check 'kura: answer C cancels'          ($r.Out -match '\[fixture-one\] Cancelled') True
+Check 'kura: waits for Enter, exit 0'   (($r.Out -match 'Press Enter to exit') -and $r.Code -eq 0) True
+$r = Invoke-Staged (Join-Path $scriptsDir 'install-7zip.ps1') 'install-7zip.ps1' @('-Manifest', $fixture) "x`nc`n`n" 'fixture-one'
+Check 'kura: bad answer asks again'     (($r.Out -match 'Type one of: S, I, C') -and ($r.Out -match 'Cancelled')) True
+$r = Invoke-Staged (Join-Path $scriptsDir 'install-7zip.ps1') 'install-7zip.ps1' @('-Mode', 'Bogus') ''
+Check 'kura: bad param value exits 1'  (($r.Code -eq 1) -and ($r.Out -match 'ERROR: .*Mode')) True
+Remove-Item -LiteralPath $stage -Recurse -Force
+
 Write-Host "$fail failure(s)"; exit $fail

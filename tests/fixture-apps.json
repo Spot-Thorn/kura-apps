@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "apps": [
+    {
+      "id": "fixture-one",
+      "name": "Fixture One",
+      "category": "Test",
+      "detect": { "displayName": "^Kura Fixture That Is Never Installed$" },
+      "latest": { "type": "none" },
+      "download": { "url": "https://example.invalid/fixture-one.msi" },
+      "installer": { "type": "msi", "silentArgs": "/qn", "interactiveArgs": "" }
+    }
+  ]
+}
