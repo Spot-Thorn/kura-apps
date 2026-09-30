@@ -67,6 +67,13 @@
     .\install-apps.ps1 -App updates
     Silently updates every app that is installed and out of date.
 #>
+
+# Everything below runs inside "& { ... } @args". Kura's runner adds a line of its own above
+# this file's contents before running it, and a script's param() block has to be the first
+# statement in the file. Inside the script block it binds normally either way.
+# The try/catch turns a bad parameter or any unhandled error into exit code 1.
+try {
+& {
 [CmdletBinding()]
 param(
     [string]$Manifest,
@@ -900,12 +907,31 @@ function Install-AppPackage {
 }
 
 # ----- UI -----------------------------------------------------------------------------
+# Asks a one-letter question. Uses Read-Host (not $Host.UI.PromptForChoice) so it also works
+# through Kura's piped runner, which replaces Read-Host with its own prompt box.
+# Options use '&' to mark the key letter, e.g. '&Silent install'. Returns the option's index.
 function Read-Choice {
     param([string]$Title, [string]$Message, [string[]]$Options, [int]$Default = 0)
-    $choices = [System.Management.Automation.Host.ChoiceDescription[]]@(
-        $Options | ForEach-Object { New-Object System.Management.Automation.Host.ChoiceDescription $_ }
-    )
-    return $Host.UI.PromptForChoice($Title, $Message, $choices, $Default)
+    $keys = @()
+    $labels = @()
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+        $m = [regex]::Match($Options[$i], '&(.)')
+        $key = if ($m.Success) { $m.Groups[1].Value.ToUpperInvariant() } else { [string]($i + 1) }
+        $keys += $key
+        $labels += ('[{0}] {1}' -f $key, ($Options[$i] -replace '&', ''))
+    }
+    if ($Title) { Write-Host $Title -ForegroundColor Cyan }
+    if ($Message) { Write-Host $Message }
+    Write-Host ('   {0}   (default: {1})' -f ($labels -join '   '), $keys[$Default])
+    while ($true) {
+        $answer = Read-Host 'Choice'
+        if ($null -eq $answer) { return $Default }
+        $answer = ([string]$answer).Trim()
+        if (-not $answer) { return $Default }
+        $idx = [array]::IndexOf($keys, $answer.Substring(0, 1).ToUpperInvariant())
+        if ($idx -ge 0) { return $idx }
+        Write-Host ('   Type one of: {0}' -f ($keys -join ', ')) -ForegroundColor Yellow
+    }
 }
 
 function Show-Table {
@@ -1139,3 +1165,8 @@ while ($true) {
     $states = @(Get-AllStates -Defs $defs -Previous $states)
 }
 Write-KuraLog "=== Finished. Log: $LogFile ===" -Level Info
+} @args
+} catch {
+    Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
